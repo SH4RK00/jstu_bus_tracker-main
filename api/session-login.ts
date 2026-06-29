@@ -8,16 +8,45 @@ import { createSessionToken } from '../src/lib/session.ts';
 
 dotenv.config();
 
+const parseJsonBody = async (req: any) => {
+  if (req.body && typeof req.body === 'object') return req.body;
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    if (typeof chunk === 'string') {
+      chunks.push(Buffer.from(chunk));
+    } else {
+      chunks.push(chunk);
+    }
+  }
+  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+};
+
+const sendJson = (res: any, status: number, payload: unknown) => {
+  const body = JSON.stringify(payload);
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(body);
+};
+
+const sendError = (res: any, status: number, error: string) => sendJson(res, status, { error });
+
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return sendError(res, 405, 'Method not allowed');
   }
 
   await ensureDatabaseSchema();
 
-  const { email, password } = req.body || {};
+  const { email, password } = await parseJsonBody(req);
   if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
+    return sendError(res, 400, 'Email and password are required');
   }
 
   try {
@@ -37,7 +66,7 @@ export default async function handler(req: any, res: any) {
         }).returning();
         dbUser = inserted;
       } else {
-        return res.status(401).json({ error: 'Invalid email or password' });
+        return sendError(res, 401, 'Invalid email or password');
       }
     } else {
       let userRecord = dbUser[0];
@@ -55,7 +84,7 @@ export default async function handler(req: any, res: any) {
     const userRecord = dbUser[0];
     const isValid = verifyPassword(password, userRecord.password || '');
     if (!isValid) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      return sendError(res, 401, 'Invalid email or password');
     }
 
     const sessionToken = createSessionToken({
@@ -66,9 +95,9 @@ export default async function handler(req: any, res: any) {
     });
 
     res.setHeader('Set-Cookie', `__session=${sessionToken}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${14 * 24 * 60 * 60}`);
-    res.status(200).json({ status: 'success' });
+    return sendJson(res, 200, { status: 'success' });
   } catch (error) {
     console.error('Session login error:', error);
-    res.status(500).json({ error: 'Internal server error during login' });
+    return sendError(res, 500, 'Internal server error during login');
   }
 }
