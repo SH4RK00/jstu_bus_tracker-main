@@ -1,4 +1,3 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
 import * as dotenv from 'dotenv';
 import { eq } from 'drizzle-orm';
 
@@ -9,7 +8,7 @@ import { createSessionToken } from '../src/lib/session.ts';
 
 dotenv.config();
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
