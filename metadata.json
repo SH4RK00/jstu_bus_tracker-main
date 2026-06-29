@@ -1,0 +1,6 @@
+{
+  "name": "JSTU BUS TRACKER",
+  "description": "A real-time bus tracking application for admins, drivers, and riders.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
