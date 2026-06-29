@@ -16,8 +16,17 @@ export default function App() {
   const checkSession = async () => {
     try {
       const res = await fetch('/api/me');
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch (parseError) {
+        console.error('Invalid JSON from /api/me:', text);
+        setUser(null);
+        return;
+      }
+
       if (res.ok) {
-        const data = await res.json();
         setUser(data.user);
       } else {
         setUser(null);

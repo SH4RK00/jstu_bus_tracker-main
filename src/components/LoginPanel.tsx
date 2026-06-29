@@ -43,7 +43,14 @@ export default function LoginPanel({ onLoginSuccess }: LoginPanelProps) {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch (parseError) {
+        data = { error: text || 'Server returned invalid JSON' };
+      }
+
       if (!res.ok) {
         throw new Error(data.error || 'Invalid credentials. Please try again.');
       }
