@@ -332,7 +332,7 @@ export default function DriverPanel() {
           <p className="text-xs text-[#8E9299] font-medium mt-1 uppercase tracking-wider">Acquire GPS and stream dynamic location coordinates for riders.</p>
         </div>
         <button
-          onClick={fetchAssignment}
+          onClick={() => fetchAssignment()}
           disabled={isDriving}
           className="flex items-center gap-1.5 bg-[#141414] hover:bg-[#2e2e2e] disabled:opacity-40 text-white text-xs font-bold uppercase tracking-widest py-2 px-4 transition-colors cursor-pointer rounded-none"
         >
