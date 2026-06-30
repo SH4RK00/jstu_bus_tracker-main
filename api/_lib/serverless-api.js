@@ -350,13 +350,35 @@ const handleAdminAssignments = async (req, res) => {
   }
 };
 
+const handleUnassignDriver = async (req, res, busId) => {
+  await ensureDatabaseSchema();
+  const dbPool = getPool();
+  try {
+    const result = await dbPool.query('DELETE FROM public.assignments WHERE bus_id = $1 RETURNING id', [Number(busId)]);
+    if (result.rowCount === 0) {
+      sendJson(res, 404, { error: 'No assignment found for this bus' });
+      return;
+    }
+    sendJson(res, 200, { success: true, message: 'Driver unassigned successfully' });
+  } catch (err) {
+    console.error('Unassign driver error:', err);
+    sendError(res, 500, 'Failed to unassign driver');
+  }
+};
+
 const handleDeleteBus = async (req, res, busId) => {
   await ensureDatabaseSchema();
   const dbPool = getPool();
   try {
+    await dbPool.query('BEGIN');
+    await dbPool.query('DELETE FROM public.location_logs WHERE bus_id = $1', [Number(busId)]);
+    await dbPool.query('DELETE FROM public.assignments WHERE bus_id = $1', [Number(busId)]);
+    await dbPool.query('DELETE FROM public.schedules WHERE bus_id = $1', [Number(busId)]);
     await dbPool.query('DELETE FROM public.buses WHERE id = $1', [Number(busId)]);
-    sendJson(res, 200, { success: true, message: 'Bus and associated data deleted successfully' });
+    await dbPool.query('COMMIT');
+    sendJson(res, 200, { success: true, message: 'Bus and all related data deleted successfully' });
   } catch (err) {
+    await dbPool.query('ROLLBACK').catch(() => {});
     console.error('Delete bus error:', err);
     sendError(res, 500, 'Failed to delete bus');
   }
@@ -489,18 +511,19 @@ export default async function handler(req, res) {
     return;
   }
 
-  const url = new URL(req.url || '/', 'https://example.com');
-  const pathname = url.pathname;
-  if (!pathname.startsWith('/api/')) {
-    sendError(res, 404, 'Not found');
-    return;
-  }
+  try {
+    const url = new URL(req.url || '/', 'https://example.com');
+    const pathname = url.pathname;
+    if (!pathname.startsWith('/api/')) {
+      sendError(res, 404, 'Not found');
+      return;
+    }
 
-  const parts = pathname.split('/').filter(Boolean);
-  if (parts[0] !== 'api') {
-    sendError(res, 404, 'Not found');
-    return;
-  }
+    const parts = pathname.split('/').filter(Boolean);
+    if (parts[0] !== 'api') {
+      sendError(res, 404, 'Not found');
+      return;
+    }
 
   if (parts[1] === 'admin') {
     if (parts[2] === 'dashboard') {
@@ -534,6 +557,7 @@ export default async function handler(req, res) {
       const user = requireAdmin(req, res);
       if (!user) return;
       if (req.method === 'POST') return handleAdminAssignments(req, res);
+      if (req.method === 'DELETE' && parts[3]) return handleUnassignDriver(req, res, parts[3]);
       return sendError(res, 405, 'Method not allowed');
     }
 
@@ -560,4 +584,8 @@ export default async function handler(req, res) {
   }
 
   sendError(res, 404, 'Route not found');
+  } catch (err) {
+    console.error('Unhandled serverless handler error:', err);
+    sendError(res, 500, 'Server error: unexpected condition while processing request');
+  }
 }

@@ -111,6 +111,16 @@ export default function AdminPanel() {
     }
   };
 
+  const parseJsonOrText = async (res: Response) => {
+    const text = await res.text();
+    if (!text) return { __empty: true };
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { __rawText: text };
+    }
+  };
+
   useEffect(() => {
     fetchDashboard();
     fetchUsers();
@@ -241,15 +251,13 @@ export default function AdminPanel() {
       const res = await fetch(`/api/admin/buses/${busId}`, {
         method: 'DELETE',
       });
-      const text = await res.text();
-      let data: any = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        data = { error: text || `Failed to delete bus (${res.status})` };
-      }
+      const data = await parseJsonOrText(res);
       if (!res.ok) {
-        throw new Error(data.error || `Failed to delete bus (${res.status})`);
+        const message = data?.error || data?.__rawText || `Failed to delete bus (${res.status})`;
+        throw new Error(message);
+      }
+      if (data?.__rawText) {
+        throw new Error(`Unexpected server response while deleting bus: ${data.__rawText}`);
       }
       setSuccessMsg('Bus deleted successfully!');
       fetchBuses();
@@ -357,9 +365,13 @@ export default function AdminPanel() {
       const res = await fetch(`/api/admin/assignments/${busId}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
+      const data = await parseJsonOrText(res);
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to unassign driver');
+        const message = data?.error || data?.__rawText || `Failed to unassign driver (${res.status})`;
+        throw new Error(message);
+      }
+      if (data?.__rawText) {
+        throw new Error(`Unexpected server response while unassigning driver: ${data.__rawText}`);
       }
       setSuccessMsg('Driver unassigned successfully!');
       fetchDashboard();
