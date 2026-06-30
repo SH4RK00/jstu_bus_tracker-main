@@ -169,10 +169,12 @@ export default function DriverPanel() {
         }
       } else {
         setError('Failed to fetch assigned bus from system.');
+        setAssigned(false);
       }
     } catch (err) {
       console.error(err);
       setError('Network error retrieving assignment details.');
+      setAssigned(false);
     } finally {
       setLoading(false);
     }
