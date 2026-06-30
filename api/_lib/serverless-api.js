@@ -598,6 +598,125 @@ export default async function handler(req, res) {
     return handleBusesList(req, res);
   }
 
+  if (parts[1] === 'driver') {
+    const user = requireAnyUser(req, res);
+    if (!user) return;
+
+    // GET /api/driver/assigned-bus
+    if (parts[2] === 'assigned-bus' && req.method === 'GET') {
+      try {
+        await ensureDatabaseSchema();
+        const dbPool = getPool();
+        const assignmentsResult = await dbPool.query(`
+          SELECT b.id AS id, b.id AS busId, b.bus_number AS "busNumber", b.name AS name, b.is_running AS "isRunning",
+                 b.last_latitude AS "lastLatitude", b.last_longitude AS "lastLongitude", b.last_updated AS "lastUpdated",
+                 b.odometer AS odometer, b.engine_hours AS "engineHours", b.sos_active AS "sosActive", b.sos_message AS "sosMessage"
+          FROM public.assignments a
+          INNER JOIN public.buses b ON a.bus_id = b.id
+          WHERE a.driver_id = $1`, [Number(user.id)]);
+
+        if (assignmentsResult.rows.length === 0) {
+          sendJson(res, 200, { assigned: false, buses: [] });
+          return;
+        }
+
+        const busesWithSchedules = [];
+        for (const b of assignmentsResult.rows) {
+          const schedulesResult = await dbPool.query('SELECT id, route_from AS "routeFrom", route_to AS "routeTo", departure_time AS "departureTime", arrival_time AS "arrivalTime" FROM public.schedules WHERE bus_id = $1 ORDER BY id', [b.busid || b.busId || b.id]);
+          busesWithSchedules.push({
+            ...b,
+            schedules: schedulesResult.rows,
+          });
+        }
+
+        sendJson(res, 200, {
+          assigned: true,
+          bus: busesWithSchedules[0],
+          schedules: busesWithSchedules[0].schedules,
+          buses: busesWithSchedules,
+        });
+      } catch (err) {
+        console.error('Driver assigned-bus error:', err);
+        sendError(res, 500, 'Failed to fetch driver schedules');
+      }
+      return;
+    }
+
+    // POST /api/driver/toggle-driving
+    if (parts[2] === 'toggle-driving' && req.method === 'POST') {
+      try {
+        await ensureDatabaseSchema();
+        const dbPool = getPool();
+        const body = await getRequestBody(req);
+        const { busId, isRunning, latitude, longitude } = body;
+        if (!busId) return sendError(res, 400, 'Missing busId');
+
+        const ass = await dbPool.query('SELECT id FROM public.assignments WHERE bus_id = $1 AND driver_id = $2 LIMIT 1', [Number(busId), Number(user.id)]);
+        if (ass.rows.length === 0) return sendError(res, 403, 'Forbidden: Driver not assigned to this bus');
+
+        const now = new Date();
+        await dbPool.query('UPDATE public.buses SET is_running = $1, last_latitude = $2, last_longitude = $3, last_updated = $4 WHERE id = $5', [!!isRunning, isRunning ? latitude : null, isRunning ? longitude : null, isRunning ? now : null, Number(busId)]);
+
+        if (isRunning && latitude !== undefined && longitude !== undefined) {
+          await dbPool.query('INSERT INTO public.location_logs (bus_id, driver_id, latitude, longitude) VALUES ($1, $2, $3, $4)', [Number(busId), Number(user.id), Number(latitude), Number(longitude)]);
+        }
+
+        sendJson(res, 200, { success: true, isRunning: !!isRunning });
+      } catch (err) {
+        console.error('Driver toggle-driving error:', err);
+        sendError(res, 500, 'Failed to start/stop driving');
+      }
+      return;
+    }
+
+    // POST /api/driver/toggle-sos
+    if (parts[2] === 'toggle-sos' && req.method === 'POST') {
+      try {
+        await ensureDatabaseSchema();
+        const dbPool = getPool();
+        const body = await getRequestBody(req);
+        const { busId, sosActive, sosMessage } = body;
+        if (!busId) return sendError(res, 400, 'Missing busId');
+
+        const ass = await dbPool.query('SELECT id FROM public.assignments WHERE bus_id = $1 AND driver_id = $2 LIMIT 1', [Number(busId), Number(user.id)]);
+        if (ass.rows.length === 0) return sendError(res, 403, 'Forbidden: Driver not assigned to this bus');
+
+        await dbPool.query('UPDATE public.buses SET sos_active = $1, sos_message = $2 WHERE id = $3', [!!sosActive, sosActive ? (sosMessage || 'EMERGENCY SOS: Driver reported urgent assistance required!') : '', Number(busId)]);
+
+        sendJson(res, 200, { success: true, sosActive: !!sosActive, sosMessage: sosActive ? (sosMessage || 'EMERGENCY SOS: Driver reported urgent assistance required!') : '' });
+      } catch (err) {
+        console.error('Driver toggle-sos error:', err);
+        sendError(res, 500, 'Failed to toggle Emergency SOS');
+      }
+      return;
+    }
+
+    // POST /api/driver/location
+    if (parts[2] === 'location' && req.method === 'POST') {
+      try {
+        await ensureDatabaseSchema();
+        const dbPool = getPool();
+        const body = await getRequestBody(req);
+        const { busId, latitude, longitude } = body;
+        if (!busId || latitude === undefined || longitude === undefined) return sendError(res, 400, 'Missing required location params');
+
+        const ass = await dbPool.query('SELECT id FROM public.assignments WHERE bus_id = $1 AND driver_id = $2 LIMIT 1', [Number(busId), Number(user.id)]);
+        if (ass.rows.length === 0) return sendError(res, 403, 'Forbidden');
+
+        await dbPool.query('UPDATE public.buses SET last_latitude = $1, last_longitude = $2, last_updated = $3 WHERE id = $4', [Number(latitude), Number(longitude), new Date(), Number(busId)]);
+        await dbPool.query('INSERT INTO public.location_logs (bus_id, driver_id, latitude, longitude) VALUES ($1, $2, $3, $4)', [Number(busId), Number(user.id), Number(latitude), Number(longitude)]);
+
+        sendJson(res, 200, { success: true });
+      } catch (err) {
+        console.error('Driver location error:', err);
+        sendError(res, 500, 'Failed to update coordinates');
+      }
+      return;
+    }
+
+    return sendError(res, 404, 'Driver route not found');
+  }
+
   sendError(res, 404, 'Route not found');
   } catch (err) {
     console.error('Unhandled serverless handler error:', err);
