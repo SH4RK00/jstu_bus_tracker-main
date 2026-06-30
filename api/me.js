@@ -1,5 +1,5 @@
-﻿const crypto = require('crypto');
-const { parse } = require('cookie');
+﻿import crypto from 'crypto';
+import { parse } from 'cookie';
 
 const sendJson = (res, status, payload) => {
   res.statusCode = status;
@@ -23,7 +23,7 @@ const verifySessionToken = (token) => {
   }
 };
 
-module.exports = (req, res) => {
+export default (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   
   if (req.method !== 'GET') {

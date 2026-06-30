@@ -1,4 +1,4 @@
-﻿const crypto = require('crypto');
+﻿import crypto from 'crypto';
 
 const sendJson = (res, status, payload) => {
   res.statusCode = status;
@@ -18,7 +18,7 @@ const createSessionToken = (payload) => {
   return encrypted;
 };
 
-module.exports = (req, res) => {
+export default (req, res) => {
   console.log('=== LOGIN HANDLER START ===');
   console.log('Method:', req.method);
   console.log('Body type:', typeof req.body);
