@@ -37,6 +37,7 @@ export default function LoginPanel({ onLoginSuccess }: LoginPanelProps) {
     try {
       const res = await fetch('/api/session-login', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
         },
