@@ -2,10 +2,9 @@
 const { parse } = require('cookie');
 
 const sendJson = (res, status, payload) => {
-  const body = JSON.stringify(payload);
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
-  res.end(body);
+  res.end(JSON.stringify(payload));
 };
 
 const sendError = (res, status, error) => sendJson(res, status, { error });
@@ -24,13 +23,16 @@ const verifySessionToken = (token) => {
   }
 };
 
-module.exports = async function handler(req, res) {
+module.exports = async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  
   if (req.method !== 'GET') {
     return sendError(res, 405, 'Method not allowed');
   }
 
   const cookies = req.headers?.cookie ? parse(req.headers.cookie) : {};
   const sessionToken = cookies.__session;
+  
   if (!sessionToken) {
     return sendError(res, 401, 'Unauthorized: No session cookie');
   }
