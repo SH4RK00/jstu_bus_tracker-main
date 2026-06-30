@@ -4,7 +4,7 @@ const sendJson = (res, status, payload) => {
   res.end(JSON.stringify(payload));
 };
 
-module.exports = async (req, res) => {
+module.exports = (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   
   if (req.method !== 'POST') {
