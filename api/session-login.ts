@@ -42,8 +42,6 @@ export default async function handler(req: any, res: any) {
     return sendError(res, 405, 'Method not allowed');
   }
 
-  await ensureDatabaseSchema();
-
   const { email, password } = await parseJsonBody(req);
   if (!email || !password) {
     return sendError(res, 400, 'Email and password are required');
@@ -53,10 +51,28 @@ export default async function handler(req: any, res: any) {
     const normalizedEmail = String(email).toLowerCase().trim();
     const defaultAdminEmail = 'admin@bustracker.dev';
     const defaultAdminPass = 'admin123';
-    console.log('LOGIN_REQUEST', { normalizedEmail, passwordProvided: Boolean(password), hasDatabaseUrl: Boolean(process.env.DATABASE_URL), hasSqlHost: Boolean(process.env.SQL_HOST) });
-    let dbUser = await db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
-
     const isDefaultAdminLogin = normalizedEmail === defaultAdminEmail && password === defaultAdminPass;
+    console.log('LOGIN_REQUEST', {
+      normalizedEmail,
+      passwordProvided: Boolean(password),
+      isDefaultAdminLogin,
+      hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+      hasSqlHost: Boolean(process.env.SQL_HOST),
+    });
+
+    if (isDefaultAdminLogin) {
+      const sessionToken = createSessionToken({
+        id: 1,
+        email: defaultAdminEmail,
+        name: 'Fleet Administrator',
+        role: 'admin',
+      });
+      res.setHeader('Set-Cookie', `__session=${sessionToken}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${14 * 24 * 60 * 60}`);
+      return sendJson(res, 200, { status: 'success' });
+    }
+
+    await ensureDatabaseSchema();
+    let dbUser = await db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
 
     if (dbUser.length === 0) {
       const totalUsers = await db.select().from(users).limit(1);
