@@ -241,9 +241,15 @@ export default function AdminPanel() {
       const res = await fetch(`/api/admin/buses/${busId}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { error: text || `Failed to delete bus (${res.status})` };
+      }
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to delete bus');
+        throw new Error(data.error || `Failed to delete bus (${res.status})`);
       }
       setSuccessMsg('Bus deleted successfully!');
       fetchBuses();
