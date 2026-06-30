@@ -168,7 +168,17 @@ export default function DriverPanel() {
           setSosMessage('');
         }
       } else {
-        setError('Failed to fetch assigned bus from system.');
+        // Attempt to surface server error details for easier debugging
+        let serverMsg = '';
+        try {
+          const txt = await res.text();
+          const parsed = txt ? JSON.parse(txt) : {};
+          serverMsg = parsed.error || parsed.message || txt || '';
+        } catch (e) {
+          serverMsg = `HTTP ${res.status} ${res.statusText}`;
+        }
+        console.error('Assigned-bus API returned error:', res.status, serverMsg);
+        setError(serverMsg || 'Failed to fetch assigned bus from system.');
         setAssigned(false);
       }
     } catch (err) {
