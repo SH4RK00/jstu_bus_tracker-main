@@ -56,11 +56,24 @@ const createPool = () => {
 let pool;
 let schemaReady = false;
 
+const getPool = () => {
+  if (!pool) {
+    pool = createPool();
+    pool.on('error', (err) => {
+      console.error('Unexpected error on idle SQL pool client:', err);
+    });
+  }
+  return pool;
+};
+
 const ensureDatabaseSchema = async () => {
   if (schemaReady) return;
-  if (!pool) pool = createPool();
+  const dbPool = getPool();
 
-  await pool.query(`
+  await dbPool.query('CREATE SCHEMA IF NOT EXISTS public');
+  await dbPool.query('SET search_path TO public');
+
+  await dbPool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id serial PRIMARY KEY,
       uid text UNIQUE,
@@ -72,7 +85,7 @@ const ensureDatabaseSchema = async () => {
     );
   `);
 
-  await pool.query(`
+  await dbPool.query(`
     CREATE TABLE IF NOT EXISTS buses (
       id serial PRIMARY KEY,
       bus_number text NOT NULL UNIQUE,
@@ -89,7 +102,7 @@ const ensureDatabaseSchema = async () => {
     );
   `);
 
-  await pool.query(`
+  await dbPool.query(`
     CREATE TABLE IF NOT EXISTS schedules (
       id serial PRIMARY KEY,
       bus_id integer NOT NULL REFERENCES buses(id) ON DELETE CASCADE,
@@ -101,7 +114,7 @@ const ensureDatabaseSchema = async () => {
     );
   `);
 
-  await pool.query(`
+  await dbPool.query(`
     CREATE TABLE IF NOT EXISTS assignments (
       id serial PRIMARY KEY,
       bus_id integer NOT NULL UNIQUE REFERENCES buses(id) ON DELETE CASCADE,
@@ -110,7 +123,7 @@ const ensureDatabaseSchema = async () => {
     );
   `);
 
-  await pool.query(`
+  await dbPool.query(`
     CREATE TABLE IF NOT EXISTS location_logs (
       id serial PRIMARY KEY,
       bus_id integer NOT NULL REFERENCES buses(id) ON DELETE CASCADE,
@@ -165,11 +178,11 @@ const normalizeEmail = (value) => String(value || '').toLowerCase().trim();
 
 const handleAdminDashboard = async (req, res) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
-    const busesResult = await client.query('SELECT * FROM buses ORDER BY id');
-    const driversResult = await client.query("SELECT * FROM users WHERE role = 'driver' ORDER BY id");
-    const assignmentsResult = await client.query(`
+    const busesResult = await dbPool.query('SELECT * FROM buses ORDER BY id');
+    const driversResult = await dbPool.query("SELECT * FROM users WHERE role = 'driver' ORDER BY id");
+    const assignmentsResult = await dbPool.query(`
       SELECT a.id AS assignment_id, b.id AS bus_id, b.bus_number AS bus_number, b.name AS bus_name,
              b.is_running AS is_running, b.last_latitude AS last_latitude, b.last_longitude AS last_longitude,
              b.last_updated AS last_updated, b.odometer AS odometer, b.engine_hours AS engine_hours,
@@ -203,17 +216,18 @@ const handleAdminDashboard = async (req, res) => {
         driverEmail: row.driver_email,
       })),
     });
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Admin dashboard error:', err);
+    sendError(res, 500, 'Failed to fetch dashboard');
   }
 };
 
 const handleAdminUsers = async (req, res) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
     if (req.method === 'GET') {
-      const result = await client.query('SELECT id, uid, email, name, role, created_at FROM users ORDER BY id');
+      const result = await dbPool.query('SELECT id, uid, email, name, role, created_at FROM users ORDER BY id');
       sendJson(res, 200, result.rows);
       return;
     }
@@ -227,14 +241,14 @@ const handleAdminUsers = async (req, res) => {
       }
 
       const normalizedEmail = normalizeEmail(email);
-      const existing = await client.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
+      const existing = await dbPool.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
       if (existing.rows.length > 0) {
         sendError(res, 400, 'User with this email already exists');
         return;
       }
 
       const hashedPassword = crypto.createHash('sha256').update(String(password)).digest('hex');
-      const created = await client.query(
+      const created = await dbPool.query(
         `INSERT INTO users (email, name, role, password, uid)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING id, uid, email, name, role, created_at`,
@@ -242,17 +256,18 @@ const handleAdminUsers = async (req, res) => {
       );
       sendJson(res, 200, created.rows[0]);
     }
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Admin users error:', err);
+    sendError(res, 500, 'Failed to load users');
   }
 };
 
 const handleAdminBuses = async (req, res) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
     if (req.method === 'GET') {
-      const result = await client.query('SELECT id, bus_number AS "busNumber", name, is_running AS "isRunning", last_latitude AS "lastLatitude", last_longitude AS "lastLongitude", last_updated AS "lastUpdated", odometer, engine_hours AS "engineHours", sos_active AS "sosActive", sos_message AS "sosMessage" FROM buses ORDER BY id');
+      const result = await dbPool.query('SELECT id, bus_number AS "busNumber", name, is_running AS "isRunning", last_latitude AS "lastLatitude", last_longitude AS "lastLongitude", last_updated AS "lastUpdated", odometer, engine_hours AS "engineHours", sos_active AS "sosActive", sos_message AS "sosMessage" FROM buses ORDER BY id');
       sendJson(res, 200, result.rows);
       return;
     }
@@ -265,13 +280,13 @@ const handleAdminBuses = async (req, res) => {
         return;
       }
 
-      const existing = await client.query('SELECT id FROM buses WHERE bus_number = $1', [String(busNumber).toUpperCase().trim()]);
+      const existing = await dbPool.query('SELECT id FROM buses WHERE bus_number = $1', [String(busNumber).toUpperCase().trim()]);
       if (existing.rows.length > 0) {
         sendError(res, 400, 'Bus number already exists');
         return;
       }
 
-      const created = await client.query(
+      const created = await dbPool.query(
         'INSERT INTO buses (bus_number, name) VALUES ($1, $2) RETURNING id, bus_number AS "busNumber", name',
         [String(busNumber).toUpperCase().trim(), String(name)],
       );
@@ -279,20 +294,21 @@ const handleAdminBuses = async (req, res) => {
       const bus = created.rows[0];
       if (Array.isArray(scheduleList) && scheduleList.length > 0) {
         const inserts = scheduleList.filter((s) => s.routeFrom && s.routeTo && s.departureTime && s.arrivalTime)
-          .map((s) => client.query('INSERT INTO schedules (bus_id, route_from, route_to, departure_time, arrival_time) VALUES ($1, $2, $3, $4, $5)', [bus.id, s.routeFrom, s.routeTo, s.departureTime, s.arrivalTime]));
+          .map((s) => dbPool.query('INSERT INTO schedules (bus_id, route_from, route_to, departure_time, arrival_time) VALUES ($1, $2, $3, $4, $5)', [bus.id, s.routeFrom, s.routeTo, s.departureTime, s.arrivalTime]));
         await Promise.all(inserts);
       }
 
       sendJson(res, 200, bus);
     }
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Admin buses error:', err);
+    sendError(res, 500, 'Failed to create or load buses');
   }
 };
 
 const handleAdminAssignments = async (req, res) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
     const body = await getRequestBody(req);
     const { busId, driverId } = body;
@@ -301,42 +317,44 @@ const handleAdminAssignments = async (req, res) => {
       return;
     }
 
-    const driverResult = await client.query('SELECT id FROM users WHERE id = $1 AND role = $2', [Number(driverId), 'driver']);
+    const driverResult = await dbPool.query('SELECT id FROM users WHERE id = $1 AND role = $2', [Number(driverId), 'driver']);
     if (driverResult.rows.length === 0) {
       sendError(res, 400, 'Selected user is not a valid driver');
       return;
     }
 
-    const existing = await client.query('SELECT id FROM assignments WHERE bus_id = $1', [Number(busId)]);
+    const existing = await dbPool.query('SELECT id FROM assignments WHERE bus_id = $1', [Number(busId)]);
     let result;
     if (existing.rows.length > 0) {
-      result = await client.query('UPDATE assignments SET driver_id = $1 WHERE bus_id = $2 RETURNING id, bus_id AS "busId", driver_id AS "driverId"', [Number(driverId), Number(busId)]);
+      result = await dbPool.query('UPDATE assignments SET driver_id = $1 WHERE bus_id = $2 RETURNING id, bus_id AS "busId", driver_id AS "driverId"', [Number(driverId), Number(busId)]);
     } else {
-      result = await client.query('INSERT INTO assignments (bus_id, driver_id) VALUES ($1, $2) RETURNING id, bus_id AS "busId", driver_id AS "driverId"', [Number(busId), Number(driverId)]);
+      result = await dbPool.query('INSERT INTO assignments (bus_id, driver_id) VALUES ($1, $2) RETURNING id, bus_id AS "busId", driver_id AS "driverId"', [Number(busId), Number(driverId)]);
     }
 
     sendJson(res, 200, result.rows[0]);
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Assignments error:', err);
+    sendError(res, 500, 'Failed to assign driver');
   }
 };
 
 const handleDeleteBus = async (req, res, busId) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
-    await client.query('DELETE FROM buses WHERE id = $1', [Number(busId)]);
+    await dbPool.query('DELETE FROM buses WHERE id = $1', [Number(busId)]);
     sendJson(res, 200, { success: true, message: 'Bus and associated data deleted successfully' });
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Delete bus error:', err);
+    sendError(res, 500, 'Failed to delete bus');
   }
 };
 
 const handleBusLogs = async (req, res, busId) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
-    const result = await client.query(`
+    const result = await dbPool.query(`
       SELECT l.id, l.latitude, l.longitude, l.timestamp, l.driver_id AS "driverId", u.name AS "driverName", u.email AS "driverEmail"
       FROM location_logs l
       INNER JOIN users u ON l.driver_id = u.id
@@ -345,14 +363,15 @@ const handleBusLogs = async (req, res, busId) => {
       LIMIT 200
     `, [Number(busId)]);
     sendJson(res, 200, result.rows);
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Bus logs error:', err);
+    sendError(res, 500, 'Failed to fetch historical logs');
   }
 };
 
 const handleBusSchedules = async (req, res, busId) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
     if (req.method === 'POST') {
       const body = await getRequestBody(req);
@@ -361,20 +380,21 @@ const handleBusSchedules = async (req, res, busId) => {
         sendError(res, 400, 'Missing required fields');
         return;
       }
-      const result = await client.query(
+      const result = await dbPool.query(
         'INSERT INTO schedules (bus_id, route_from, route_to, departure_time, arrival_time) VALUES ($1, $2, $3, $4, $5) RETURNING id, bus_id AS "busId", route_from AS "routeFrom", route_to AS "routeTo", departure_time AS "departureTime", arrival_time AS "arrivalTime"',
         [Number(busId), routeFrom, routeTo, departureTime, arrivalTime],
       );
       sendJson(res, 200, result.rows[0]);
     }
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Bus schedules error:', err);
+    sendError(res, 500, 'Failed to add schedule');
   }
 };
 
 const handleScheduleUpdate = async (req, res, scheduleId) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
     const body = await getRequestBody(req);
     const { routeFrom, routeTo, departureTime, arrivalTime } = body;
@@ -382,36 +402,38 @@ const handleScheduleUpdate = async (req, res, scheduleId) => {
       sendError(res, 400, 'Missing required fields');
       return;
     }
-    const result = await client.query(
+    const result = await dbPool.query(
       'UPDATE schedules SET route_from = $1, route_to = $2, departure_time = $3, arrival_time = $4 WHERE id = $5 RETURNING id, bus_id AS "busId", route_from AS "routeFrom", route_to AS "routeTo", departure_time AS "departureTime", arrival_time AS "arrivalTime"',
       [routeFrom, routeTo, departureTime, arrivalTime, Number(scheduleId)],
     );
     sendJson(res, 200, result.rows[0]);
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Schedule update error:', err);
+    sendError(res, 500, 'Failed to update schedule');
   }
 };
 
 const handleScheduleDelete = async (req, res, scheduleId) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
-    await client.query('DELETE FROM schedules WHERE id = $1', [Number(scheduleId)]);
+    await dbPool.query('DELETE FROM schedules WHERE id = $1', [Number(scheduleId)]);
     sendJson(res, 200, { success: true });
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Schedule delete error:', err);
+    sendError(res, 500, 'Failed to delete schedule');
   }
 };
 
 const handleBusesList = async (req, res) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
-    const busesResult = await client.query('SELECT * FROM buses ORDER BY id');
+    const busesResult = await dbPool.query('SELECT * FROM buses ORDER BY id');
     const output = [];
     for (const bus of busesResult.rows) {
-      const schedulesResult = await client.query('SELECT id, route_from AS "routeFrom", route_to AS "routeTo", departure_time AS "departureTime", arrival_time AS "arrivalTime" FROM schedules WHERE bus_id = $1 ORDER BY id', [bus.id]);
-      const assignmentResult = await client.query('SELECT u.name FROM assignments a INNER JOIN users u ON a.driver_id = u.id WHERE a.bus_id = $1 LIMIT 1', [bus.id]);
+      const schedulesResult = await dbPool.query('SELECT id, route_from AS "routeFrom", route_to AS "routeTo", departure_time AS "departureTime", arrival_time AS "arrivalTime" FROM schedules WHERE bus_id = $1 ORDER BY id', [bus.id]);
+      const assignmentResult = await dbPool.query('SELECT u.name FROM assignments a INNER JOIN users u ON a.driver_id = u.id WHERE a.bus_id = $1 LIMIT 1', [bus.id]);
       output.push({
         id: bus.id,
         busNumber: bus.bus_number,
@@ -429,19 +451,21 @@ const handleBusesList = async (req, res) => {
       });
     }
     sendJson(res, 200, output);
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Buses list error:', err);
+    sendError(res, 500, 'Failed to fetch buses list');
   }
 };
 
 const handleBusHistory = async (req, res, busId) => {
   await ensureDatabaseSchema();
-  const client = await pool.connect();
+  const dbPool = getPool();
   try {
-    const result = await client.query('SELECT id, latitude, longitude, timestamp, driver_id AS "driverId" FROM location_logs WHERE bus_id = $1 ORDER BY timestamp DESC LIMIT 30', [Number(busId)]);
+    const result = await dbPool.query('SELECT id, latitude, longitude, timestamp, driver_id AS "driverId" FROM location_logs WHERE bus_id = $1 ORDER BY timestamp DESC LIMIT 30', [Number(busId)]);
     sendJson(res, 200, result.rows);
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Bus history error:', err);
+    sendError(res, 500, 'Failed to load trace logs');
   }
 };
 
