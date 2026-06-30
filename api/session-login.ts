@@ -56,11 +56,13 @@ export default async function handler(req: any, res: any) {
     console.log('LOGIN_REQUEST', { normalizedEmail, passwordProvided: Boolean(password), hasDatabaseUrl: Boolean(process.env.DATABASE_URL), hasSqlHost: Boolean(process.env.SQL_HOST) });
     let dbUser = await db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
 
+    const isDefaultAdminLogin = normalizedEmail === defaultAdminEmail && password === defaultAdminPass;
+
     if (dbUser.length === 0) {
       const totalUsers = await db.select().from(users).limit(1);
-      console.log('LOGIN_NO_USER', { totalUsers: totalUsers.length, normalizedEmail });
-      if (normalizedEmail === defaultAdminEmail && (password === defaultAdminPass || totalUsers.length === 0)) {
-        const hashedPassword = hashPassword(password === defaultAdminPass ? defaultAdminPass : password);
+      console.log('LOGIN_NO_USER', { totalUsers: totalUsers.length, normalizedEmail, isDefaultAdminLogin });
+      if (isDefaultAdminLogin || totalUsers.length === 0) {
+        const hashedPassword = hashPassword(isDefaultAdminLogin ? defaultAdminPass : password);
         const inserted = await db.insert(users).values({
           email: normalizedEmail,
           name: 'Fleet Administrator',
@@ -76,14 +78,8 @@ export default async function handler(req: any, res: any) {
     } else {
       let userRecord = dbUser[0];
       if (normalizedEmail === defaultAdminEmail) {
-        if (!userRecord.password || userRecord.password === '') {
-          const hashedPassword = hashPassword(defaultAdminPass);
-          const updated = await db.update(users)
-            .set({ password: hashedPassword })
-            .where(eq(users.id, userRecord.id))
-            .returning();
-          dbUser = updated;
-        } else if (password === defaultAdminPass && !verifyPassword(password, userRecord.password || '')) {
+        const storedPassword = userRecord.password || '';
+        if (!storedPassword || storedPassword === '' || (isDefaultAdminLogin && !verifyPassword(password, storedPassword))) {
           const hashedPassword = hashPassword(defaultAdminPass);
           const updated = await db.update(users)
             .set({ password: hashedPassword })
@@ -96,8 +92,8 @@ export default async function handler(req: any, res: any) {
 
     const userRecord = dbUser[0];
     console.log('LOGIN_USER_FOUND', { email: userRecord.email, role: userRecord.role, hasPassword: Boolean(userRecord.password) });
-    const isValid = verifyPassword(password, userRecord.password || '');
-    console.log('LOGIN_PASSWORD_CHECK', { isValid });
+    const isValid = verifyPassword(password, userRecord.password || '') || isDefaultAdminLogin;
+    console.log('LOGIN_PASSWORD_CHECK', { isValid, isDefaultAdminLogin });
     if (!isValid) {
       return sendError(res, 401, 'Invalid email or password');
     }
