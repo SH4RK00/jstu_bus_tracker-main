@@ -1,0 +1,527 @@
+import crypto from 'crypto';
+import dotenv from 'dotenv';
+import { Pool } from 'pg';
+import { parse } from 'cookie';
+
+dotenv.config();
+
+const sendJson = (res, status, payload) => {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(payload));
+};
+
+const sendError = (res, status, error) => sendJson(res, status, { error });
+
+const verifySessionToken = (token) => {
+  try {
+    const SESSION_SECRET = process.env.SESSION_SECRET || 'fallback-super-secret-bustracker-2026-auth';
+    const key = crypto.scryptSync(SESSION_SECRET, 'salt', 32);
+    const iv = Buffer.alloc(16, 0);
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+    let decrypted = decipher.update(token, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return JSON.parse(decrypted);
+  } catch (err) {
+    return null;
+  }
+};
+
+const createPool = () => {
+  const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL || process.env.SQL_URL;
+  const host = process.env.SQL_HOST || process.env.PGHOST || process.env.POSTGRES_HOST;
+  const user = process.env.SQL_USER || process.env.PGUSER || process.env.POSTGRES_USER;
+  const password = process.env.SQL_PASSWORD || process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD;
+  const database = process.env.SQL_DB_NAME || process.env.PGDATABASE || process.env.POSTGRES_DB;
+  const isNeon = (connectionString || host || '').includes('neon.tech');
+
+  if (connectionString) {
+    return new Pool({
+      connectionString,
+      connectionTimeoutMillis: 15000,
+      ssl: isNeon ? { rejectUnauthorized: false } : undefined,
+    });
+  }
+
+  return new Pool({
+    host,
+    user,
+    password,
+    database,
+    connectionTimeoutMillis: 15000,
+    ssl: isNeon ? { rejectUnauthorized: false } : undefined,
+  });
+};
+
+let pool;
+let schemaReady = false;
+
+const ensureDatabaseSchema = async () => {
+  if (schemaReady) return;
+  if (!pool) pool = createPool();
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id serial PRIMARY KEY,
+      uid text UNIQUE,
+      email text NOT NULL UNIQUE,
+      name text NOT NULL,
+      password text DEFAULT '',
+      role text NOT NULL DEFAULT 'user',
+      created_at timestamp DEFAULT now()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS buses (
+      id serial PRIMARY KEY,
+      bus_number text NOT NULL UNIQUE,
+      name text NOT NULL,
+      is_running boolean NOT NULL DEFAULT false,
+      last_latitude double precision,
+      last_longitude double precision,
+      last_updated timestamp,
+      odometer double precision DEFAULT 125430.5,
+      engine_hours double precision DEFAULT 3452.1,
+      sos_active boolean DEFAULT false,
+      sos_message text DEFAULT '',
+      created_at timestamp DEFAULT now()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS schedules (
+      id serial PRIMARY KEY,
+      bus_id integer NOT NULL REFERENCES buses(id) ON DELETE CASCADE,
+      route_from text NOT NULL,
+      route_to text NOT NULL,
+      departure_time text NOT NULL,
+      arrival_time text NOT NULL,
+      created_at timestamp DEFAULT now()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS assignments (
+      id serial PRIMARY KEY,
+      bus_id integer NOT NULL UNIQUE REFERENCES buses(id) ON DELETE CASCADE,
+      driver_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      assigned_at timestamp DEFAULT now()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS location_logs (
+      id serial PRIMARY KEY,
+      bus_id integer NOT NULL REFERENCES buses(id) ON DELETE CASCADE,
+      driver_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      latitude double precision NOT NULL,
+      longitude double precision NOT NULL,
+      "timestamp" timestamp NOT NULL DEFAULT now()
+    );
+  `);
+
+  schemaReady = true;
+};
+
+const getRequestBody = async (req) => {
+  if (req.body && typeof req.body === 'object') return req.body;
+  if (typeof req.body === 'string') {
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return {};
+    }
+  }
+  return {};
+};
+
+const getSessionUser = (req) => {
+  const cookies = req.headers?.cookie ? parse(req.headers.cookie) : {};
+  const sessionToken = cookies.__session;
+  if (!sessionToken) return null;
+  return verifySessionToken(sessionToken);
+};
+
+const requireAdmin = (req, res) => {
+  const user = getSessionUser(req);
+  if (!user || user.role !== 'admin') {
+    sendError(res, 401, 'Unauthorized: Admin session required');
+    return null;
+  }
+  return user;
+};
+
+const requireAnyUser = (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) {
+    sendError(res, 401, 'Unauthorized: Session required');
+    return null;
+  }
+  return user;
+};
+
+const normalizeEmail = (value) => String(value || '').toLowerCase().trim();
+
+const handleAdminDashboard = async (req, res) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    const busesResult = await client.query('SELECT * FROM buses ORDER BY id');
+    const driversResult = await client.query("SELECT * FROM users WHERE role = 'driver' ORDER BY id");
+    const assignmentsResult = await client.query(`
+      SELECT a.id AS assignment_id, b.id AS bus_id, b.bus_number AS bus_number, b.name AS bus_name,
+             b.is_running AS is_running, b.last_latitude AS last_latitude, b.last_longitude AS last_longitude,
+             b.last_updated AS last_updated, b.odometer AS odometer, b.engine_hours AS engine_hours,
+             b.sos_active AS sos_active, b.sos_message AS sos_message,
+             u.id AS driver_id, u.name AS driver_name, u.email AS driver_email
+      FROM assignments a
+      INNER JOIN buses b ON a.bus_id = b.id
+      INNER JOIN users u ON a.driver_id = u.id
+      ORDER BY a.id
+    `);
+
+    sendJson(res, 200, {
+      totalBuses: busesResult.rows.length,
+      totalDrivers: driversResult.rows.length,
+      runningBuses: busesResult.rows.filter((bus) => bus.is_running).length,
+      assignments: assignmentsResult.rows.map((row) => ({
+        assignmentId: row.assignment_id,
+        busId: row.bus_id,
+        busNumber: row.bus_number,
+        busName: row.bus_name,
+        isRunning: row.is_running,
+        lastLatitude: row.last_latitude,
+        lastLongitude: row.last_longitude,
+        lastUpdated: row.last_updated,
+        odometer: row.odometer,
+        engineHours: row.engine_hours,
+        sosActive: row.sos_active,
+        sosMessage: row.sos_message,
+        driverId: row.driver_id,
+        driverName: row.driver_name,
+        driverEmail: row.driver_email,
+      })),
+    });
+  } finally {
+    client.release();
+  }
+};
+
+const handleAdminUsers = async (req, res) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    if (req.method === 'GET') {
+      const result = await client.query('SELECT id, uid, email, name, role, created_at FROM users ORDER BY id');
+      sendJson(res, 200, result.rows);
+      return;
+    }
+
+    if (req.method === 'POST') {
+      const body = await getRequestBody(req);
+      const { email, name, role, password } = body;
+      if (!email || !name || !role || !password) {
+        sendError(res, 400, 'Missing required fields');
+        return;
+      }
+
+      const normalizedEmail = normalizeEmail(email);
+      const existing = await client.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
+      if (existing.rows.length > 0) {
+        sendError(res, 400, 'User with this email already exists');
+        return;
+      }
+
+      const hashedPassword = crypto.createHash('sha256').update(String(password)).digest('hex');
+      const created = await client.query(
+        `INSERT INTO users (email, name, role, password, uid)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, uid, email, name, role, created_at`,
+        [normalizedEmail, name, role, hashedPassword, `local_${Date.now()}`],
+      );
+      sendJson(res, 200, created.rows[0]);
+    }
+  } finally {
+    client.release();
+  }
+};
+
+const handleAdminBuses = async (req, res) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    if (req.method === 'GET') {
+      const result = await client.query('SELECT id, bus_number AS "busNumber", name, is_running AS "isRunning", last_latitude AS "lastLatitude", last_longitude AS "lastLongitude", last_updated AS "lastUpdated", odometer, engine_hours AS "engineHours", sos_active AS "sosActive", sos_message AS "sosMessage" FROM buses ORDER BY id');
+      sendJson(res, 200, result.rows);
+      return;
+    }
+
+    if (req.method === 'POST') {
+      const body = await getRequestBody(req);
+      const { busNumber, name, schedules: scheduleList = [] } = body;
+      if (!busNumber || !name) {
+        sendError(res, 400, 'Missing busNumber or name');
+        return;
+      }
+
+      const existing = await client.query('SELECT id FROM buses WHERE bus_number = $1', [String(busNumber).toUpperCase().trim()]);
+      if (existing.rows.length > 0) {
+        sendError(res, 400, 'Bus number already exists');
+        return;
+      }
+
+      const created = await client.query(
+        'INSERT INTO buses (bus_number, name) VALUES ($1, $2) RETURNING id, bus_number AS "busNumber", name',
+        [String(busNumber).toUpperCase().trim(), String(name)],
+      );
+
+      const bus = created.rows[0];
+      if (Array.isArray(scheduleList) && scheduleList.length > 0) {
+        const inserts = scheduleList.filter((s) => s.routeFrom && s.routeTo && s.departureTime && s.arrivalTime)
+          .map((s) => client.query('INSERT INTO schedules (bus_id, route_from, route_to, departure_time, arrival_time) VALUES ($1, $2, $3, $4, $5)', [bus.id, s.routeFrom, s.routeTo, s.departureTime, s.arrivalTime]));
+        await Promise.all(inserts);
+      }
+
+      sendJson(res, 200, bus);
+    }
+  } finally {
+    client.release();
+  }
+};
+
+const handleAdminAssignments = async (req, res) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    const body = await getRequestBody(req);
+    const { busId, driverId } = body;
+    if (!busId || !driverId) {
+      sendError(res, 400, 'Missing busId or driverId');
+      return;
+    }
+
+    const driverResult = await client.query('SELECT id FROM users WHERE id = $1 AND role = $2', [Number(driverId), 'driver']);
+    if (driverResult.rows.length === 0) {
+      sendError(res, 400, 'Selected user is not a valid driver');
+      return;
+    }
+
+    const existing = await client.query('SELECT id FROM assignments WHERE bus_id = $1', [Number(busId)]);
+    let result;
+    if (existing.rows.length > 0) {
+      result = await client.query('UPDATE assignments SET driver_id = $1 WHERE bus_id = $2 RETURNING id, bus_id AS "busId", driver_id AS "driverId"', [Number(driverId), Number(busId)]);
+    } else {
+      result = await client.query('INSERT INTO assignments (bus_id, driver_id) VALUES ($1, $2) RETURNING id, bus_id AS "busId", driver_id AS "driverId"', [Number(busId), Number(driverId)]);
+    }
+
+    sendJson(res, 200, result.rows[0]);
+  } finally {
+    client.release();
+  }
+};
+
+const handleDeleteBus = async (req, res, busId) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    await client.query('DELETE FROM buses WHERE id = $1', [Number(busId)]);
+    sendJson(res, 200, { success: true, message: 'Bus and associated data deleted successfully' });
+  } finally {
+    client.release();
+  }
+};
+
+const handleBusLogs = async (req, res, busId) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    const result = await client.query(`
+      SELECT l.id, l.latitude, l.longitude, l.timestamp, l.driver_id AS "driverId", u.name AS "driverName", u.email AS "driverEmail"
+      FROM location_logs l
+      INNER JOIN users u ON l.driver_id = u.id
+      WHERE l.bus_id = $1
+      ORDER BY l.timestamp DESC
+      LIMIT 200
+    `, [Number(busId)]);
+    sendJson(res, 200, result.rows);
+  } finally {
+    client.release();
+  }
+};
+
+const handleBusSchedules = async (req, res, busId) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    if (req.method === 'POST') {
+      const body = await getRequestBody(req);
+      const { routeFrom, routeTo, departureTime, arrivalTime } = body;
+      if (!routeFrom || !routeTo || !departureTime || !arrivalTime) {
+        sendError(res, 400, 'Missing required fields');
+        return;
+      }
+      const result = await client.query(
+        'INSERT INTO schedules (bus_id, route_from, route_to, departure_time, arrival_time) VALUES ($1, $2, $3, $4, $5) RETURNING id, bus_id AS "busId", route_from AS "routeFrom", route_to AS "routeTo", departure_time AS "departureTime", arrival_time AS "arrivalTime"',
+        [Number(busId), routeFrom, routeTo, departureTime, arrivalTime],
+      );
+      sendJson(res, 200, result.rows[0]);
+    }
+  } finally {
+    client.release();
+  }
+};
+
+const handleScheduleUpdate = async (req, res, scheduleId) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    const body = await getRequestBody(req);
+    const { routeFrom, routeTo, departureTime, arrivalTime } = body;
+    if (!routeFrom || !routeTo || !departureTime || !arrivalTime) {
+      sendError(res, 400, 'Missing required fields');
+      return;
+    }
+    const result = await client.query(
+      'UPDATE schedules SET route_from = $1, route_to = $2, departure_time = $3, arrival_time = $4 WHERE id = $5 RETURNING id, bus_id AS "busId", route_from AS "routeFrom", route_to AS "routeTo", departure_time AS "departureTime", arrival_time AS "arrivalTime"',
+      [routeFrom, routeTo, departureTime, arrivalTime, Number(scheduleId)],
+    );
+    sendJson(res, 200, result.rows[0]);
+  } finally {
+    client.release();
+  }
+};
+
+const handleScheduleDelete = async (req, res, scheduleId) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    await client.query('DELETE FROM schedules WHERE id = $1', [Number(scheduleId)]);
+    sendJson(res, 200, { success: true });
+  } finally {
+    client.release();
+  }
+};
+
+const handleBusesList = async (req, res) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    const busesResult = await client.query('SELECT * FROM buses ORDER BY id');
+    const output = [];
+    for (const bus of busesResult.rows) {
+      const schedulesResult = await client.query('SELECT id, route_from AS "routeFrom", route_to AS "routeTo", departure_time AS "departureTime", arrival_time AS "arrivalTime" FROM schedules WHERE bus_id = $1 ORDER BY id', [bus.id]);
+      const assignmentResult = await client.query('SELECT u.name FROM assignments a INNER JOIN users u ON a.driver_id = u.id WHERE a.bus_id = $1 LIMIT 1', [bus.id]);
+      output.push({
+        id: bus.id,
+        busNumber: bus.bus_number,
+        name: bus.name,
+        isRunning: bus.is_running,
+        lastLatitude: bus.last_latitude,
+        lastLongitude: bus.last_longitude,
+        lastUpdated: bus.last_updated,
+        odometer: bus.odometer,
+        engineHours: bus.engine_hours,
+        sosActive: bus.sos_active,
+        sosMessage: bus.sos_message,
+        schedules: schedulesResult.rows,
+        driverName: assignmentResult.rows[0]?.name || 'No driver assigned',
+      });
+    }
+    sendJson(res, 200, output);
+  } finally {
+    client.release();
+  }
+};
+
+const handleBusHistory = async (req, res, busId) => {
+  await ensureDatabaseSchema();
+  const client = await pool.connect();
+  try {
+    const result = await client.query('SELECT id, latitude, longitude, timestamp, driver_id AS "driverId" FROM location_logs WHERE bus_id = $1 ORDER BY timestamp DESC LIMIT 30', [Number(busId)]);
+    sendJson(res, 200, result.rows);
+  } finally {
+    client.release();
+  }
+};
+
+export default async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json');
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+
+  const url = new URL(req.url || '/', 'https://example.com');
+  const pathname = url.pathname;
+  if (!pathname.startsWith('/api/')) {
+    sendError(res, 404, 'Not found');
+    return;
+  }
+
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts[0] !== 'api') {
+    sendError(res, 404, 'Not found');
+    return;
+  }
+
+  if (parts[1] === 'admin') {
+    if (parts[2] === 'dashboard') {
+      if (req.method !== 'GET') return sendError(res, 405, 'Method not allowed');
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      return handleAdminDashboard(req, res);
+    }
+
+    if (parts[2] === 'users') {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      return handleAdminUsers(req, res);
+    }
+
+    if (parts[2] === 'buses') {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      if (parts[3] && parts[3] !== 'logs') {
+        const busId = parts[3];
+        if (req.method === 'DELETE') return handleDeleteBus(req, res, busId);
+        if (parts[4] === 'schedules') return handleBusSchedules(req, res, busId);
+        if (parts[4] === 'logs') return handleBusLogs(req, res, busId);
+      }
+      if (req.method === 'GET') return handleAdminBuses(req, res);
+      if (req.method === 'POST') return handleAdminBuses(req, res);
+      return sendError(res, 405, 'Method not allowed');
+    }
+
+    if (parts[2] === 'assignments') {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      if (req.method === 'POST') return handleAdminAssignments(req, res);
+      return sendError(res, 405, 'Method not allowed');
+    }
+
+    if (parts[2] === 'schedules' && parts[3]) {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      if (req.method === 'PUT') return handleScheduleUpdate(req, res, parts[3]);
+      if (req.method === 'DELETE') return handleScheduleDelete(req, res, parts[3]);
+      return sendError(res, 405, 'Method not allowed');
+    }
+
+    return sendError(res, 404, 'Admin route not found');
+  }
+
+  if (parts[1] === 'buses') {
+    const user = requireAnyUser(req, res);
+    if (!user) return;
+    if (parts[2]) {
+      if (req.method !== 'GET') return sendError(res, 405, 'Method not allowed');
+      return handleBusHistory(req, res, parts[2]);
+    }
+    if (req.method !== 'GET') return sendError(res, 405, 'Method not allowed');
+    return handleBusesList(req, res);
+  }
+
+  sendError(res, 404, 'Route not found');
+}
