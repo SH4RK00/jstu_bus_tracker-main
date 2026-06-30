@@ -15,7 +15,7 @@ export default function App() {
   // Check server session cookie
   const checkSession = async () => {
     try {
-      const res = await fetch('/api/me');
+      const res = await fetch('/api/me', { credentials: 'include' });
       const text = await res.text();
       let data: any = {};
       try {

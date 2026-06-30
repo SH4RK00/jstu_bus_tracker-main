@@ -1052,7 +1052,7 @@ export default function AdminPanel() {
                             </span>
                           </td>
                           <td className="p-4">
-                            {u.password ? (
+                            {u.hasPassword ? (
                               <span className="text-green-600 font-mono text-[10px] font-bold uppercase">Configured</span>
                             ) : (
                               <span className="text-amber-600 font-mono text-[10px] italic font-bold">No Password Set</span>

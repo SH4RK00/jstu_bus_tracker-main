@@ -30,6 +30,7 @@ function useGeolocationStream(
         await fetch('/api/driver/location', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
           body: JSON.stringify({ busId, latitude: lat, longitude: lng }),
         });
       } catch (err) {
@@ -122,7 +123,7 @@ export default function DriverPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/driver/assigned-bus');
+      const res = await fetch('/api/driver/assigned-bus', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         setAssigned(data.assigned);
@@ -221,6 +222,7 @@ export default function DriverPanel() {
             const res = await fetch('/api/driver/toggle-driving', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
               body: JSON.stringify({ busId: bus.id || (bus as any).busId, isRunning: true, latitude, longitude }),
             });
 
@@ -250,6 +252,7 @@ export default function DriverPanel() {
         const res = await fetch('/api/driver/toggle-driving', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ busId: bus.id || (bus as any).busId, isRunning: false }),
         });
 
@@ -276,6 +279,7 @@ export default function DriverPanel() {
       const res = await fetch('/api/driver/toggle-sos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           busId,
           sosActive: active,

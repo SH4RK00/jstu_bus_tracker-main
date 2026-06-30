@@ -239,7 +239,10 @@ const handleAdminUsers = async (req, res) => {
   const dbPool = getPool();
   try {
     if (req.method === 'GET') {
-      const result = await dbPool.query('SELECT id, uid, email, name, role, created_at FROM public.users ORDER BY id');
+      // Return a safe hasPassword flag instead of raw password hash
+      const result = await dbPool.query(`SELECT id, uid, email, name, role, created_at,
+        CASE WHEN password IS NULL OR password = '' THEN false ELSE true END AS "hasPassword"
+        FROM public.users ORDER BY id`);
       sendJson(res, 200, result.rows);
       return;
     }
