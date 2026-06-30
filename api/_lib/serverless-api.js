@@ -35,22 +35,22 @@ const createPool = () => {
   const database = process.env.SQL_DB_NAME || process.env.PGDATABASE || process.env.POSTGRES_DB;
   const isNeon = (connectionString || host || '').includes('neon.tech');
 
-  if (connectionString) {
-    return new Pool({
-      connectionString,
-      connectionTimeoutMillis: 15000,
-      ssl: isNeon ? { rejectUnauthorized: false } : undefined,
-    });
-  }
-
-  return new Pool({
-    host,
-    user,
-    password,
-    database,
+  const poolConfig = {
     connectionTimeoutMillis: 15000,
     ssl: isNeon ? { rejectUnauthorized: false } : undefined,
+  };
+
+  const pool = connectionString
+    ? new Pool({ connectionString, ...poolConfig })
+    : new Pool({ host, user, password, database, ...poolConfig });
+
+  pool.on('connect', (client) => {
+    client.query('SET search_path TO public, "$user"').catch((err) => {
+      console.error('Failed to set search_path on new connection:', err);
+    });
   });
+
+  return pool;
 };
 
 let pool;
@@ -104,7 +104,7 @@ const ensureDatabaseSchema = async () => {
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS public.schedules (
       id serial PRIMARY KEY,
-      bus_id integer NOT NULL REFERENCES buses(id) ON DELETE CASCADE,
+      bus_id integer NOT NULL REFERENCES public.buses(id) ON DELETE CASCADE,
       route_from text NOT NULL,
       route_to text NOT NULL,
       departure_time text NOT NULL,
@@ -116,8 +116,8 @@ const ensureDatabaseSchema = async () => {
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS public.assignments (
       id serial PRIMARY KEY,
-      bus_id integer NOT NULL UNIQUE REFERENCES buses(id) ON DELETE CASCADE,
-      driver_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      bus_id integer NOT NULL UNIQUE REFERENCES public.buses(id) ON DELETE CASCADE,
+      driver_id integer NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
       assigned_at timestamp DEFAULT now()
     );
   `);
@@ -125,8 +125,8 @@ const ensureDatabaseSchema = async () => {
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS public.location_logs (
       id serial PRIMARY KEY,
-      bus_id integer NOT NULL REFERENCES buses(id) ON DELETE CASCADE,
-      driver_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      bus_id integer NOT NULL REFERENCES public.buses(id) ON DELETE CASCADE,
+      driver_id integer NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
       latitude double precision NOT NULL,
       longitude double precision NOT NULL,
       "timestamp" timestamp NOT NULL DEFAULT now()
@@ -174,6 +174,19 @@ const requireAnyUser = (req, res) => {
 };
 
 const normalizeEmail = (value) => String(value || '').toLowerCase().trim();
+
+const hashPassword = (password) => {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(String(password), salt, 1000, 64, 'sha512').toString('hex');
+  return `${salt}:${hash}`;
+};
+
+const verifyPassword = (password, stored) => {
+  if (!stored || !stored.includes(':')) return false;
+  const [salt, hash] = stored.split(':');
+  const checkHash = crypto.pbkdf2Sync(String(password), salt, 1000, 64, 'sha512').toString('hex');
+  return hash === checkHash;
+};
 
 const handleAdminDashboard = async (req, res) => {
   await ensureDatabaseSchema();
@@ -246,7 +259,7 @@ const handleAdminUsers = async (req, res) => {
         return;
       }
 
-      const hashedPassword = crypto.createHash('sha256').update(String(password)).digest('hex');
+      const hashedPassword = hashPassword(password);
       const created = await dbPool.query(
         `INSERT INTO public.users (email, name, role, password, uid)
          VALUES ($1, $2, $3, $4, $5)
