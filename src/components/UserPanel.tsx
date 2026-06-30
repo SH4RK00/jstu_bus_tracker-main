@@ -154,12 +154,19 @@ export default function UserPanel() {
             </div>
           ) : filteredBuses.length > 0 ? (
             <div className="divide-y divide-[#F2F2F2]">
-              {filteredBuses.map((bus) => {
+                  {filteredBuses.map((bus) => {
                 const isActive = selectedBus?.id === bus.id;
                 return (
                   <button
                     key={bus.id}
                     onClick={() => handleSelectBus(bus)}
+                    onTouchStart={() => handleSelectBus(bus)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleSelectBus(bus);
+                      }
+                    }}
                     className={`w-full p-4 flex flex-col text-left transition-colors hover:bg-[#F9F9F8] cursor-pointer border-l-2 ${
                       isActive ? 'border-[#141414] bg-[#F2F2F2]' : 'border-transparent bg-transparent'
                     }`}
