@@ -53,10 +53,12 @@ export default async function handler(req: any, res: any) {
     const normalizedEmail = String(email).toLowerCase().trim();
     const defaultAdminEmail = 'admin@bustracker.dev';
     const defaultAdminPass = 'admin123';
+    console.log('LOGIN_REQUEST', { normalizedEmail, passwordProvided: Boolean(password), hasDatabaseUrl: Boolean(process.env.DATABASE_URL), hasSqlHost: Boolean(process.env.SQL_HOST) });
     let dbUser = await db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
 
     if (dbUser.length === 0) {
       const totalUsers = await db.select().from(users).limit(1);
+      console.log('LOGIN_NO_USER', { totalUsers: totalUsers.length, normalizedEmail });
       if (normalizedEmail === defaultAdminEmail && (password === defaultAdminPass || totalUsers.length === 0)) {
         const hashedPassword = hashPassword(password === defaultAdminPass ? defaultAdminPass : password);
         const inserted = await db.insert(users).values({
@@ -68,6 +70,7 @@ export default async function handler(req: any, res: any) {
         }).returning();
         dbUser = inserted;
       } else {
+        console.log('LOGIN_REJECTED_NO_USER');
         return sendError(res, 401, 'Invalid email or password');
       }
     } else {
@@ -92,7 +95,9 @@ export default async function handler(req: any, res: any) {
     }
 
     const userRecord = dbUser[0];
+    console.log('LOGIN_USER_FOUND', { email: userRecord.email, role: userRecord.role, hasPassword: Boolean(userRecord.password) });
     const isValid = verifyPassword(password, userRecord.password || '');
+    console.log('LOGIN_PASSWORD_CHECK', { isValid });
     if (!isValid) {
       return sendError(res, 401, 'Invalid email or password');
     }
