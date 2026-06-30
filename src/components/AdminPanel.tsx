@@ -371,7 +371,10 @@ export default function AdminPanel() {
         throw new Error(message);
       }
       if (data?.__rawText) {
-        throw new Error(`Unexpected server response while unassigning driver: ${data.__rawText}`);
+        // Surface raw server response (trim long HTML/text for UI):
+        const raw = String(data.__rawText || '').trim();
+        const summary = raw.length > 300 ? raw.slice(0, 300) + '...' : raw;
+        throw new Error(summary);
       }
       setSuccessMsg('Driver unassigned successfully!');
       fetchDashboard();

@@ -374,7 +374,12 @@ const handleDeleteBus = async (req, res, busId) => {
     await dbPool.query('DELETE FROM public.location_logs WHERE bus_id = $1', [Number(busId)]);
     await dbPool.query('DELETE FROM public.assignments WHERE bus_id = $1', [Number(busId)]);
     await dbPool.query('DELETE FROM public.schedules WHERE bus_id = $1', [Number(busId)]);
-    await dbPool.query('DELETE FROM public.buses WHERE id = $1', [Number(busId)]);
+    const deleted = await dbPool.query('DELETE FROM public.buses WHERE id = $1 RETURNING id', [Number(busId)]);
+    if (deleted.rowCount === 0) {
+      await dbPool.query('ROLLBACK');
+      sendJson(res, 404, { error: 'Bus not found' });
+      return;
+    }
     await dbPool.query('COMMIT');
     sendJson(res, 200, { success: true, message: 'Bus and all related data deleted successfully' });
   } catch (err) {
@@ -513,6 +518,13 @@ export default async function handler(req, res) {
 
   try {
     const url = new URL(req.url || '/', 'https://example.com');
+    // Log incoming requests for debugging on Vercel (method + pathname)
+    try {
+      const pathnameLog = url.pathname;
+      console.log('[serverless] Request:', req.method, pathnameLog);
+    } catch (logErr) {
+      console.log('[serverless] Request received, failed to compute pathname');
+    }
     const pathname = url.pathname;
     if (!pathname.startsWith('/api/')) {
       sendError(res, 404, 'Not found');
