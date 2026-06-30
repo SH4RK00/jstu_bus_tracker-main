@@ -1,10 +1,5 @@
-require('dotenv').config();
-
+﻿const crypto = require('crypto');
 const { parse } = require('cookie');
-const { eq } = require('drizzle-orm');
-const { db } = require('../src/db/index.ts');
-const { users } = require('../src/db/schema.ts');
-const { verifySessionToken } = require('../src/lib/session.ts');
 
 const sendJson = (res, status, payload) => {
   const body = JSON.stringify(payload);
@@ -14,6 +9,20 @@ const sendJson = (res, status, payload) => {
 };
 
 const sendError = (res, status, error) => sendJson(res, status, { error });
+
+const verifySessionToken = (token) => {
+  try {
+    const SESSION_SECRET = process.env.SESSION_SECRET || 'fallback-super-secret-bustracker-2026-auth';
+    const key = crypto.scryptSync(SESSION_SECRET, 'salt', 32);
+    const iv = Buffer.alloc(16, 0);
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+    let decrypted = decipher.update(token, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return JSON.parse(decrypted);
+  } catch (err) {
+    return null;
+  }
+};
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -31,24 +40,12 @@ module.exports = async function handler(req, res) {
     return sendError(res, 401, 'Unauthorized: Invalid session');
   }
 
-  try {
-    const dbUser = await db.select().from(users).where(eq(users.id, decoded.id)).limit(1);
-    if (dbUser.length === 0) {
-      return sendError(res, 401, 'Unauthorized: User not found');
-    }
-
-    const user = dbUser[0];
-    return sendJson(res, 200, {
-      user: {
-        id: user.id,
-        uid: user.uid,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-      },
-    });
-  } catch (error) {
-    console.error('Me endpoint error:', error);
-    return sendError(res, 500, 'Internal server error');
-  }
+  return sendJson(res, 200, {
+    user: {
+      id: decoded.id,
+      email: decoded.email,
+      name: decoded.name,
+      role: decoded.role,
+    },
+  });
 };
