@@ -3,22 +3,23 @@ import * as dotenv from "dotenv";
 
 dotenv.config();
 
-const sqlHost = process.env.SQL_HOST;
-const sqlDbName = process.env.SQL_DB_NAME;
-const user = process.env.SQL_ADMIN_USER || process.env.SQL_USER;
-const password = process.env.SQL_ADMIN_PASSWORD || process.env.SQL_PASSWORD;
+const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL;
+const sqlHost = process.env.SQL_HOST || process.env.PGHOST || process.env.POSTGRES_HOST;
+const sqlDbName = process.env.SQL_DB_NAME || process.env.PGDATABASE || process.env.POSTGRES_DB;
+const user = process.env.SQL_ADMIN_USER || process.env.SQL_USER || process.env.PGUSER || process.env.POSTGRES_USER;
+const password = process.env.SQL_ADMIN_PASSWORD || process.env.SQL_PASSWORD || process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD;
 
-if (!sqlHost) {
-  throw new Error("SQL_HOST must be set in environment variables.");
+if (!connectionString && !sqlHost) {
+  throw new Error("A Postgres connection string or host must be set in environment variables.");
 }
-if (!sqlDbName) {
-  throw new Error("SQL_DB_NAME must be set in environment variables.");
+if (!connectionString && !sqlDbName) {
+  throw new Error("SQL_DB_NAME, PGDATABASE, or POSTGRES_DB must be set in environment variables.");
 }
-if (!user) {
-  throw new Error("SQL_ADMIN_USER or SQL_USER must be set in environment variables.");
+if (!connectionString && !user) {
+  throw new Error("SQL_ADMIN_USER, SQL_USER, PGUSER, or POSTGRES_USER must be set in environment variables.");
 }
-if (!password) {
-  throw new Error("SQL_ADMIN_PASSWORD or SQL_PASSWORD must be set in environment variables.");
+if (!connectionString && !password) {
+  throw new Error("SQL_ADMIN_PASSWORD, SQL_PASSWORD, PGPASSWORD, or POSTGRES_PASSWORD must be set in environment variables.");
 }
 
 export default defineConfig({
@@ -26,12 +27,14 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "postgresql",
   schemaFilter: ["public"],
-  dbCredentials: {
-    host: sqlHost,
-    user: user,
-    password: password,
-    database: sqlDbName,
-    ssl: false,
-  },
+  dbCredentials: connectionString
+    ? { url: connectionString, ssl: true } as any
+    : {
+        host: sqlHost,
+        user: user,
+        password: password,
+        database: sqlDbName,
+        ssl: false,
+      },
   verbose: true,
 });

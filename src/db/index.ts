@@ -6,12 +6,26 @@ import { Pool } from 'pg';
 import * as schema from './schema.ts';
 
 export const createPool = () => {
-  const isNeon = process.env.SQL_HOST?.includes('neon.tech');
+  const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL || process.env.SQL_URL;
+  const host = process.env.SQL_HOST || process.env.PGHOST || process.env.POSTGRES_HOST;
+  const user = process.env.SQL_USER || process.env.PGUSER || process.env.POSTGRES_USER;
+  const password = process.env.SQL_PASSWORD || process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD;
+  const database = process.env.SQL_DB_NAME || process.env.PGDATABASE || process.env.POSTGRES_DB;
+  const isNeon = (connectionString || host || '').includes('neon.tech');
+
+  if (connectionString) {
+    return new Pool({
+      connectionString,
+      connectionTimeoutMillis: 15000,
+      ssl: isNeon ? { rejectUnauthorized: false } : undefined,
+    });
+  }
+
   return new Pool({
-    host: process.env.SQL_HOST,
-    user: process.env.SQL_USER,
-    password: process.env.SQL_PASSWORD,
-    database: process.env.SQL_DB_NAME,
+    host,
+    user,
+    password,
+    database,
     connectionTimeoutMillis: 15000,
     ssl: isNeon ? { rejectUnauthorized: false } : undefined,
   });
