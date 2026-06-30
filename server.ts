@@ -91,8 +91,9 @@ async function startServer() {
 
       res.json({ status: 'success' });
     } catch (error) {
-      console.error('Session login error:', error);
-      res.status(500).json({ error: 'Internal server error during login' });
+      console.error('Session login error:', error && (error.stack || error));
+      const devDetails = process.env.NODE_ENV !== 'production' ? { details: (error && error.message) || String(error) } : {};
+      res.status(500).json({ error: 'Internal server error during login', ...devDetails });
     }
   });
 

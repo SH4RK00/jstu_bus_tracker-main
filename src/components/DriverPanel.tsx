@@ -123,7 +123,10 @@ export default function DriverPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/driver/assigned-bus', { credentials: 'include' });
+      const res = await fetch('/api/driver/assigned-bus', {
+        credentials: 'include',
+        headers: { 'Accept': 'application/json' },
+      });
       if (res.ok) {
         const data = await res.json();
         setAssigned(data.assigned);
@@ -178,7 +181,7 @@ export default function DriverPanel() {
           serverMsg = `HTTP ${res.status} ${res.statusText}`;
         }
         console.error('Assigned-bus API returned error:', res.status, serverMsg);
-        setError(serverMsg || 'Failed to fetch assigned bus from system.');
+        setError(serverMsg || 'Failed to fetch assigned bus from system. The driver endpoint may be unavailable.');
         setAssigned(false);
       }
     } catch (err) {
