@@ -1,5 +1,3 @@
-require('dotenv').config();
-
 const sendJson = (res, status, payload) => {
   const body = JSON.stringify(payload);
   res.statusCode = status;

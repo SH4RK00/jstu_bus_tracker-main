@@ -87,7 +87,7 @@ module.exports = async function handler(req, res) {
         role: 'admin',
       });
 
-      res.setHeader('Set-Cookie', \__session=\; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=\\);
+      res.setHeader('Set-Cookie', `__session=${sessionToken}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${14 * 24 * 60 * 60}`);
       return sendJson(res, 200, { status: 'success' });
     }
 
