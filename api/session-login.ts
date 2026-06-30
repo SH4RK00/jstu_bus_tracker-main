@@ -51,12 +51,14 @@ export default async function handler(req: any, res: any) {
 
   try {
     const normalizedEmail = String(email).toLowerCase().trim();
+    const defaultAdminEmail = 'admin@bustracker.dev';
+    const defaultAdminPass = 'admin123';
     let dbUser = await db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
 
     if (dbUser.length === 0) {
       const totalUsers = await db.select().from(users).limit(1);
-      if (totalUsers.length === 0 && normalizedEmail === 'admin@bustracker.dev') {
-        const hashedPassword = hashPassword(password);
+      if (normalizedEmail === defaultAdminEmail && (password === defaultAdminPass || totalUsers.length === 0)) {
+        const hashedPassword = hashPassword(password === defaultAdminPass ? defaultAdminPass : password);
         const inserted = await db.insert(users).values({
           email: normalizedEmail,
           name: 'Fleet Administrator',
@@ -70,14 +72,22 @@ export default async function handler(req: any, res: any) {
       }
     } else {
       let userRecord = dbUser[0];
-      if (normalizedEmail === 'admin@bustracker.dev' && (!userRecord.password || userRecord.password === '')) {
-        const defaultAdminPass = 'admin123';
-        const hashedPassword = hashPassword(defaultAdminPass);
-        const updated = await db.update(users)
-          .set({ password: hashedPassword })
-          .where(eq(users.id, userRecord.id))
-          .returning();
-        dbUser = updated;
+      if (normalizedEmail === defaultAdminEmail) {
+        if (!userRecord.password || userRecord.password === '') {
+          const hashedPassword = hashPassword(defaultAdminPass);
+          const updated = await db.update(users)
+            .set({ password: hashedPassword })
+            .where(eq(users.id, userRecord.id))
+            .returning();
+          dbUser = updated;
+        } else if (password === defaultAdminPass && !verifyPassword(password, userRecord.password || '')) {
+          const hashedPassword = hashPassword(defaultAdminPass);
+          const updated = await db.update(users)
+            .set({ password: hashedPassword })
+            .where(eq(users.id, userRecord.id))
+            .returning();
+          dbUser = updated;
+        }
       }
     }
 
