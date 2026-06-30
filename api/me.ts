@@ -1,5 +1,6 @@
 import * as dotenv from 'dotenv';
 import { parse } from 'cookie';
+import { eq } from 'drizzle-orm';
 
 import { db } from '../src/db/index.ts';
 import { users } from '../src/db/schema.ts';
@@ -33,7 +34,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const dbUser = await db.select().from(users).where(users.id.equals(decoded.id)).limit(1);
+    const dbUser = await db.select().from(users).where(eq(users.id, decoded.id)).limit(1);
     if (dbUser.length === 0) {
       return sendError(res, 401, 'Unauthorized: User not found');
     }
