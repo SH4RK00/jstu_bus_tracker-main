@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { LogIn, Shield, ChevronRight } from 'lucide-react';
+import { LogIn, Shield, ChevronRight, Check } from 'lucide-react';
 
-const copilotBg = '/src/assets/images/copilot_1782765887301.jpg';
-const jstuLogo = '/src/assets/images/jstu_logo_1782765902291.jpg';
+const jstuLogo = 'https://jstu.ac.bd/assets/img/logo.png';
+// Use a yellow bus image - replace with your own bus image URL
+const busBackground = '/src/assets/images/yellow-bus.jpg';
 
 interface LoginPanelProps {
   onLoginSuccess: () => void;
@@ -18,6 +19,7 @@ interface BypassUser {
 export default function LoginPanel({ onLoginSuccess }: LoginPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSuccess, setShowSuccess] = useState(false);
   
   // Direct login credentials
   const [email, setEmail] = useState('');
@@ -56,7 +58,11 @@ export default function LoginPanel({ onLoginSuccess }: LoginPanelProps) {
         throw new Error(data.error || 'Invalid credentials. Please try again.');
       }
 
-      onLoginSuccess();
+      // Show success animation for 1.5 seconds before calling onLoginSuccess
+      setShowSuccess(true);
+      setTimeout(() => {
+        onLoginSuccess();
+      }, 1500);
     } catch (err: any) {
       console.error('Login Error:', err);
       setError(err.message || 'Login failed. Please check your credentials.');
@@ -68,11 +74,34 @@ export default function LoginPanel({ onLoginSuccess }: LoginPanelProps) {
 
   return (
     <div className="min-h-screen bg-[#E4E3E0] flex items-center justify-center p-4 relative overflow-hidden font-sans">
-      {/* Low transparency Copilot Background Image */}
+      {/* Yellow Bus Background Image */}
       <div 
-        className="absolute inset-0 bg-cover bg-center opacity-15 pointer-events-none"
-        style={{ backgroundImage: `url(${copilotBg})` }}
+        className="absolute inset-0 bg-cover bg-center opacity-20 pointer-events-none"
+        style={{ backgroundImage: `url(${busBackground})` }}
       />
+      
+      {/* Success Animation Overlay */}
+      {showSuccess && (
+        <div className="fixed inset-0 flex items-center justify-center bg-gradient-to-br from-green-500/80 to-green-600/80 backdrop-blur-sm pointer-events-none z-50">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center animate-bounce">
+              <Check className="w-12 h-12 text-green-600 stroke-[3]" />
+            </div>
+            <p className="text-white font-bold text-lg uppercase tracking-wider">Login Successful!</p>
+            <p className="text-white text-xs uppercase tracking-wider opacity-90">Redirecting...</p>
+          </div>
+        </div>
+      )}
+      
+      {loading && !showSuccess && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-sm pointer-events-none z-40">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-16 h-16 border-4 border-white border-t-yellow-400 rounded-full animate-spin" />
+            <p className="text-white font-bold text-sm uppercase tracking-wider">Verifying credentials...</p>
+          </div>
+        </div>
+      )}
+      
       {/* High-density grid background representation */}
       <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'linear-gradient(#141414 1px, transparent 1px), linear-gradient(90deg, #141414 1px, transparent 1px)', backgroundSize: '30px 30px' }} />
       
@@ -138,10 +167,10 @@ export default function LoginPanel({ onLoginSuccess }: LoginPanelProps) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-3 bg-[#141414] text-white hover:bg-[#2e2e2e] transition-colors py-3 px-4 font-bold uppercase tracking-widest text-xs disabled:opacity-50 cursor-pointer rounded-none"
+              className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-[#141414] to-[#2e2e2e] hover:from-[#2e2e2e] hover:to-[#3a3a3a] text-white transition-all py-3 px-4 font-bold uppercase tracking-widest text-xs disabled:opacity-50 cursor-pointer rounded-none shadow-md"
             >
               {loading ? (
-                <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-none animate-spin" />
+                <div className="h-4 w-4 border-2 border-white border-t-yellow-400 rounded-full animate-spin" />
               ) : (
                 <>
                   <LogIn className="h-4 w-4" />
