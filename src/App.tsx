@@ -5,8 +5,7 @@ import AdminPanel from './components/AdminPanel.tsx';
 import DriverPanel from './components/DriverPanel.tsx';
 import UserPanel from './components/UserPanel.tsx';
 import { LogOut, MapPin, Shield, Compass, User as UserIcon } from 'lucide-react';
-
-const jstuLogo = '/src/assets/images/jstu_logo_1782765902291.jpg';
+import jstuLogo from './assets/images/jstu_logo_1782765902291.jpg';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);

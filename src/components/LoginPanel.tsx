@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { LogIn, Shield, ChevronRight, Check } from 'lucide-react';
-
-const jstuLogo = 'https://jstu.ac.bd/assets/img/logo.png';
-// Use a yellow bus image - replace with your own bus image URL
-const busBackground = '/src/assets/images/yellow-bus.jpg';
+import jstuLogo from '../assets/images/jstu_logo_1782765902291.jpg';
+import busBackground from '../assets/images/copilot_1782765887301.jpg';
 
 interface LoginPanelProps {
   onLoginSuccess: () => void;
